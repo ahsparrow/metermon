@@ -65,10 +65,9 @@ class MeterMonitor:
             await asyncio.sleep(report_interval)
 
     async def run(self, energy_interval, power_interval):
-        t1 = asyncio.create_task(self.energy_mon(energy_interval))
-        t2 = asyncio.create_task(self.power_mon(power_interval))
-
-        await asyncio.gather(t1, t2)
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.energy_mon(energy_interval))
+            tg.create_task(self.power_mon(power_interval))
 
 
 mqtt = MQTTClient(
