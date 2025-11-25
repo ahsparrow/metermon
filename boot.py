@@ -3,7 +3,7 @@ def connect():
     import network
     import secrets
 
-    network.hostname("metermonitor")
+    network.hostname("metermon")
 
     wlan = network.WLAN()
     wlan.active(True)

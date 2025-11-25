@@ -1,8 +1,9 @@
 import asyncio
-from machine import Pin
+import machine
 import micropython
+import network
 import time
-from umqtt.robust import MQTTClient
+from umqtt.simple import MQTTClient
 
 import secrets
 
@@ -11,7 +12,8 @@ micropython.alloc_emergency_exception_buf(100)
 
 
 class MeterMonitor:
-    def __init__(self, mqtt, led):
+    def __init__(self, wlan, mqtt, led):
+        self.wlan = wlan
         self.mqtt = mqtt
         self.led = led
 
@@ -19,6 +21,15 @@ class MeterMonitor:
         self.pulse_count = 0
         self.pulse_delta_ms = 0
         self.pulse_prev_ticks = 0
+
+    def connect(self):
+        if not self.wlan.isconnected():
+            print("re-connecting to network...")
+            self.wlan.connect("cumulus-2g", secrets.WIFI_PASSWORD)
+            while not self.wlan.isconnected():
+                machine.idle()
+
+            print("network config:", self.wlan.ipconfig("addr4"))
 
     # Interrupt callback
     def isr_callback(self, src):
@@ -42,7 +53,10 @@ class MeterMonitor:
 
         while 1:
             wh = self.pulse_count // 4
+            self.connect()
+            self.mqtt.connect()
             self.mqtt.publish(b"metermon/cumulative_wh", str(wh).encode())
+            self.mqtt.disconnect()
 
             if self.pulse_count - self.stored_pulse_count >= 4000:
                 try:
@@ -60,7 +74,10 @@ class MeterMonitor:
             if self.pulse_delta_ms > 0:
                 # One pulse per second = 900 Watts
                 power = int(900 / (self.pulse_delta_ms / 1000))
+                self.connect()
+                self.mqtt.connect()
                 self.mqtt.publish(b"metermon/power_w", str(power).encode())
+                self.mqtt.disconnect()
 
             await asyncio.sleep(report_interval)
 
@@ -71,25 +88,19 @@ class MeterMonitor:
         await asyncio.gather(t1, t2)
 
 
+wlan = network.WLAN(network.STA_IF)
 mqtt = MQTTClient(
     "metermon_client",
     "homeassistant.local",
     user="mqtt",
     password=secrets.MQTT_PASSWORD,
 )
-while 1:
-    try:
-        mqtt.connect()
-        break
-    except OSError:
-        print("Trying to connect to MQTT broker...")
-        time.sleep(1)
 
-led = Pin("LED", Pin.OUT)
-pulse_pin = Pin(5, Pin.IN)
+led = machine.Pin("LED", machine.Pin.OUT)
+pulse_pin = machine.Pin(5, machine.Pin.IN)
 
-meter_mon = MeterMonitor(mqtt, led)
-pulse_pin.irq(meter_mon.isr_callback, trigger=Pin.IRQ_RISING, hard=True)
+meter_mon = MeterMonitor(wlan, mqtt, led)
+pulse_pin.irq(meter_mon.isr_callback, trigger=machine.Pin.IRQ_RISING, hard=True)
 # timer = Timer(freq=2, callback=meter_mon.isr_callback, hard=True)
 
 asyncio.run(meter_mon.run(energy_interval=300, power_interval=5))
